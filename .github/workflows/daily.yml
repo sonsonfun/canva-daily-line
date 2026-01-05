@@ -2,9 +2,8 @@ name: Daily Canva Line
 
 on:
   schedule:
-    # 毎日 日本時間12:00 (UTC 3:00) に実行
     - cron: '0 3 * * *'
-  workflow_dispatch: # 手動で「今すぐ実行」ボタンを押せるようにする
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -18,9 +17,10 @@ jobs:
           python-version: '3.9'
           
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests google-generativeai Pillow
         
       - name: Run script
+        id: run_script  # ←ここ重要：Pythonからの出力を受け取るためのID
         env:
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
@@ -28,4 +28,13 @@ jobs:
           CANVA_DESIGN_ID: ${{ secrets.CANVA_DESIGN_ID }}
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
+
+      # ★ここが新機能：新しいトークンをGitHubのSecretに上書き保存する
+      - name: Update Refresh Token Secret
+        if: steps.run_script.outputs.new_refresh_token != '' # 新しいトークンがある時だけ実行
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }} # ステップ1で作った権限を使う
+        run: |
+          gh secret set CANVA_REFRESH_TOKEN --body "${{ steps.run_script.outputs.new_refresh_token }}"
