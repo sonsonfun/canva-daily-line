@@ -35,16 +35,18 @@ def export_high_quality_image(access_token):
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # ここでインデント（スペース）を揃えています
+    # 構文エラーを修正しました
     payload = {
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
-        "pages": [2] 
-        "force_generation": True # もしあれば有効ですが、基本はpages指定で新しいはず
+        "pages": [2]
     }
     
     resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code != 200: return None
+    if resp.status_code != 200:
+        print(f"Export失敗: {resp.text}")
+        return None
+        
     job_id = resp.json().get("job", {}).get("id")
     
     for _ in range(15):
@@ -68,7 +70,7 @@ def analyze_image_with_gemini(image_bytes):
         if "解析不可" in result or not result:
             return None
         return result
-    except Exception as e:
+    except Exception:
         return None
 
 def main():
@@ -88,7 +90,11 @@ def main():
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    messages = [{"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}]
+    # 画像送信（URLの末尾にダミーの数字を足してキャッシュを回避）
+    timestamp = int(time.time())
+    cache_free_url = f"{image_url}&t={timestamp}"
+    
+    messages = [{"type": "image", "originalContentUrl": cache_free_url, "previewImageUrl": cache_free_url}]
     if text_msg:
         messages.append({"type": "text", "text": text_msg})
     
