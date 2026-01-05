@@ -1,0 +1,31 @@
+name: Daily Canva Line
+
+on:
+  schedule:
+    # 毎日 日本時間12:00 (UTC 3:00) に実行
+    - cron: '0 3 * * *'
+  workflow_dispatch: # 手動で「今すぐ実行」ボタンを押せるようにする
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Run script
+        env:
+          CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
+          CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
+          CANVA_REFRESH_TOKEN: ${{ secrets.CANVA_REFRESH_TOKEN }}
+          CANVA_DESIGN_ID: ${{ secrets.CANVA_DESIGN_ID }}
+          LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python main.py
