@@ -35,12 +35,11 @@ def export_high_quality_image(access_token):
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # ★ここを [2] に変更しました
- payload = {
+    # ここでインデント（スペース）を揃えています
+    payload = {
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
-        "pages": [2],
-        "force_generation": True # もしあれば有効ですが、基本はpages指定で新しいはず
+        "pages": [2] 
     }
     
     resp = requests.post(url, headers=headers, json=payload)
@@ -56,15 +55,12 @@ def export_high_quality_image(access_token):
     return None
 
 def analyze_image_with_gemini(image_bytes):
-    print("Gemini: 2枚目の画像を解析中...")
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
         image = Image.open(BytesIO(image_bytes))
         prompt = """
-        画像はエクセルの表です。
-        1. 項目と数値を正確に読み取ってください。
-        2. LINEで見やすいように、箇条書きで整理して教えてください。
-        ※もし内容が読み取れない場合は「解析不可」とだけ答えてください。
+        画像はエクセルの表です。項目と数値を正確に読み取って整理してください。
+        もし内容が読み取れない場合は「解析不可」とだけ答えてください。
         """
         response = model.generate_content([prompt, image])
         result = response.text.strip()
@@ -72,7 +68,6 @@ def analyze_image_with_gemini(image_bytes):
             return None
         return result
     except Exception as e:
-        print(f"Geminiエラー: {e}")
         return None
 
 def main():
@@ -83,11 +78,8 @@ def main():
         with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
             f.write(f"new_refresh_token={new_refresh_token}\n")
 
-    # 2枚目の画像URLを取得
     image_url = export_high_quality_image(access_token)
-    if not image_url:
-        print("画像の取得に失敗しました。")
-        sys.exit(1)
+    if not image_url: sys.exit(1)
 
     img_resp = requests.get(image_url)
     text_msg = analyze_image_with_gemini(img_resp.content)
@@ -95,16 +87,12 @@ def main():
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    # 画像メッセージを作成
     messages = [{"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}]
-    
-    # 解析結果があればテキストメッセージを追加
     if text_msg:
         messages.append({"type": "text", "text": text_msg})
     
     payload = {"to": LINE_USER_ID, "messages": messages}
     requests.post(line_url, headers=headers, json=payload)
-    print("2枚目の送信完了！")
 
 if __name__ == "__main__":
     main()
