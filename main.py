@@ -40,6 +40,7 @@ def export_high_quality_image(access_token):
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
         "pages": [2] 
+        "force_generation": True # もしあれば有効ですが、基本はpages指定で新しいはず
     }
     
     resp = requests.post(url, headers=headers, json=payload)
