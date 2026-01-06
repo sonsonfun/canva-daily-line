@@ -4,7 +4,10 @@ import base64
 import json
 import sys
 import time
-# AI関連のライブラリは削除しました
+# google-genaiパッケージへの移行準備として、エラー回避済みの記述を使用
+import google.generativeai as genai
+from PIL import Image
+from io import BytesIO
 
 # 設定
 REFRESH_TOKEN = os.environ["CANVA_REFRESH_TOKEN"]
@@ -13,6 +16,9 @@ CLIENT_SECRET = os.environ["CANVA_CLIENT_SECRET"]
 DESIGN_ID = os.environ["CANVA_DESIGN_ID"]
 LINE_TOKEN = os.environ["LINE_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+
+genai.configure(api_key=GEMINI_API_KEY)
 
 def get_new_tokens():
     url = "https://api.canva.com/rest/v1/oauth/token"
@@ -21,19 +27,19 @@ def get_new_tokens():
     headers = {"Authorization": f"Basic {b64_auth}", "Content-Type": "application/x-www-form-urlencoded"}
     data = {"grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN}
     resp = requests.post(url, headers=headers, data=data)
-    if resp.status_code != 200: return None, None
+    if resp.status_code != 200:
+        return None, None
     return resp.json().get("access_token"), resp.json().get("refresh_token")
 
-def export_all_pages(access_token):
-    """1枚目と2枚目を両方書き出す"""
+def export_high_quality_image(access_token):
+    """2枚目（Page 2）を書き出す"""
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # 強制的に1と2の両方を取得
     payload = {
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
-        "pages": [1, 2]
+        "pages": [2]
     }
     
     resp = requests.post(url, headers=headers, json=payload)
@@ -45,8 +51,26 @@ def export_all_pages(access_token):
         check_resp = requests.get(f"{url}/{job_id}", headers=headers)
         job = check_resp.json().get("job", {})
         if job.get("status") == "success":
-            return job.get("urls", [])
+            return job.get("urls", [])[0]
     return None
+
+def analyze_image_with_gemini(image_bytes):
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        image = Image.open(BytesIO(image_bytes))
+        prompt = """
+        画像はエクセルの表です。
+        1. 項目と数値を正確に読み取ってください。
+        2. LINEで見やすいように、箇条書きで整理して教えてください。
+        ※もし内容が読み取れない場合は「解析不可」とだけ答えてください。
+        """
+        response = model.generate_content([prompt, image])
+        result = response.text.strip()
+        if "解析不可" in result or not result:
+            return None
+        return result
+    except Exception:
+        return None
 
 def main():
     access_token, new_refresh_token = get_new_tokens()
@@ -56,32 +80,28 @@ def main():
         with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
             f.write(f"new_refresh_token={new_refresh_token}\n")
 
-    # 画像URLリストを取得
-    urls = export_all_pages(access_token)
-    if not urls: sys.exit(1)
+    image_url = export_high_quality_image(access_token)
+    if not image_url: sys.exit(1)
 
+    img_resp = requests.get(image_url)
+    # AI解析を実行
+    text_msg = analyze_image_with_gemini(img_resp.content)
+    
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    # タイムスタンプでキャッシュ回避
-    ts = int(time.time())
-
-    # 1ページ目と2ページ目を、ラベル付きで送信
-    messages = []
+    # キャッシュ回避用（常に新しいURLに見せる）
+    timestamp = int(time.time())
+    cache_free_url = f"{image_url}&t={timestamp}"
     
-    # APIが思う「1枚目」
-    url1 = f"{urls[0]}&t={ts}_1"
-    messages.append({"type": "text", "text": "👇 APIが認識している【1ページ目】"})
-    messages.append({"type": "image", "originalContentUrl": url1, "previewImageUrl": url1})
-
-    # APIが思う「2枚目」
-    if len(urls) > 1:
-        url2 = f"{urls[1]}&t={ts}_2"
-        messages.append({"type": "text", "text": "👇 APIが認識している【2ページ目】"})
-        messages.append({"type": "image", "originalContentUrl": url2, "previewImageUrl": url2})
-
+    messages = [{"type": "image", "originalContentUrl": cache_free_url, "previewImageUrl": cache_free_url}]
+    
+    if text_msg:
+        messages.append({"type": "text", "text": text_msg})
+    
     payload = {"to": LINE_USER_ID, "messages": messages}
     requests.post(line_url, headers=headers, json=payload)
+    print("送信完了")
 
 if __name__ == "__main__":
     main()
