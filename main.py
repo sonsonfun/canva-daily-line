@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import json
+import base64
 
 # 環境変数
 CANVA_CLIENT_ID = os.environ["CANVA_CLIENT_ID"]
@@ -14,7 +15,6 @@ LINE_USER_ID = os.environ["LINE_USER_ID"]
 def refresh_canva_token():
     url = "https://api.canva.com/rest/v1/oauth/token"
     auth_str = f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}"
-    import base64
     b64_auth = base64.b64encode(auth_str.encode()).decode()
 
     headers = {
@@ -38,12 +38,11 @@ def export_design(access_token):
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # ★修正箇所1: pages で [1, 2] を指定
+    # ★修正: 全ページ出力のため、pagesの指定を削除しました
     data = {
         "design_id": CANVA_DESIGN_ID,
         "format": {"type": "jpg", "quality": 80},
-        "type": "image",
-        "pages": [1, 2]  # ここに追加しました！
+        "type": "image"
     }
     
     resp = requests.post(url, headers=headers, json=data)
@@ -60,24 +59,23 @@ def export_design(access_token):
         status = check_resp.json()["job"]["status"]
         
         if status == "success":
-            # ★修正箇所2: [0]だけではなく、URLのリスト全体を返します
             return check_resp.json()["job"]["urls"]
         elif status == "failed":
             raise Exception("Canva Export Job Failed")
         print("Waiting for export...")
 
-def send_line_message(image_urls): # 引数名を複数形に変更
+def send_line_message(image_urls):
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
     
-    # ★修正箇所3: 複数の画像を送信できるようにメッセージを作成
+    # ★修正: 枚数が変わっても対応できるように文言を動的に変更
     messages = [
         {
             "type": "text", 
-            "text": "本日のデザイン(2枚)をお届けします！"
+            "text": f"本日のデザイン({len(image_urls)}枚)をお届けします！"
         }
     ]
     
@@ -89,10 +87,11 @@ def send_line_message(image_urls): # 引数名を複数形に変更
             "previewImageUrl": img_url
         })
 
-    # LINEは一度に送れるメッセージが5つまでなので注意（今回は計3つなのでOK）
+    # LINE Messaging API制限: メッセージは最大5件まで
+    # (テキスト1件 + 画像4枚までならこのまま送れます)
     data = {
         "to": LINE_USER_ID,
-        "messages": messages
+        "messages": messages[:5] # 万が一5枚以上あってもエラーにならないようスライスで安全策
     }
     
     resp = requests.post(url, headers=headers, json=data)
@@ -112,7 +111,6 @@ if __name__ == "__main__":
             print("✨ New refresh token captured.")
         
         print("2. Exporting Design...")
-        # img_urls はリスト（配列）になります
         img_urls = export_design(access_token)
         
         print(f"取得した画像の枚数: {len(img_urls)}")
