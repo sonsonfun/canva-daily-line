@@ -19,8 +19,10 @@ jobs:
         with:
           python-version: '3.9'
 
+      # ▼▼▼ ここを修正しました ▼▼▼
+      # requirements.txt を読み込むのではなく、直接 requests を入れます
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install requests
 
       - name: Run script
         env:
