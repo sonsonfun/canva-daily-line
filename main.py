@@ -37,10 +37,13 @@ def refresh_canva_token():
 def export_design(access_token):
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    
+    # ★修正箇所1: pages で [1, 2] を指定
     data = {
         "design_id": CANVA_DESIGN_ID,
         "format": {"type": "jpg", "quality": 80},
-        "type": "image"
+        "type": "image",
+        "pages": [1, 2]  # ここに追加しました！
     }
     
     resp = requests.post(url, headers=headers, json=data)
@@ -57,28 +60,41 @@ def export_design(access_token):
         status = check_resp.json()["job"]["status"]
         
         if status == "success":
-            return check_resp.json()["job"]["urls"][0]
+            # ★修正箇所2: [0]だけではなく、URLのリスト全体を返します
+            return check_resp.json()["job"]["urls"]
         elif status == "failed":
             raise Exception("Canva Export Job Failed")
         print("Waiting for export...")
 
-def send_line_message(image_url):
+def send_line_message(image_urls): # 引数名を複数形に変更
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json"
     }
+    
+    # ★修正箇所3: 複数の画像を送信できるようにメッセージを作成
+    messages = [
+        {
+            "type": "text", 
+            "text": "本日のデザイン(2枚)をお届けします！"
+        }
+    ]
+    
+    # URLのリストをループして、画像メッセージを追加
+    for img_url in image_urls:
+        messages.append({
+            "type": "image", 
+            "originalContentUrl": img_url, 
+            "previewImageUrl": img_url
+        })
+
+    # LINEは一度に送れるメッセージが5つまでなので注意（今回は計3つなのでOK）
     data = {
         "to": LINE_USER_ID,
-        "messages": [
-            {
-                "type": "text", "text": "本日のデザインをお届けします！"
-            },
-            {
-                "type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url
-            }
-        ]
+        "messages": messages
     }
+    
     resp = requests.post(url, headers=headers, json=data)
     if resp.status_code != 200:
         raise Exception(f"LINE Send Failed: {resp.text}")
@@ -89,18 +105,20 @@ if __name__ == "__main__":
         print("1. Refreshing Canva Token...")
         access_token, new_refresh_token = refresh_canva_token()
         
-        # 新しいリフレッシュトークンがある場合、GitHub Actionsの出力に渡す
         if new_refresh_token:
-            print(f"::add-mask::{new_refresh_token}") # ログで隠す
+            print(f"::add-mask::{new_refresh_token}")
             with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
                 print(f"new_refresh_token={new_refresh_token}", file=fh)
             print("✨ New refresh token captured.")
         
         print("2. Exporting Design...")
-        img_url = export_design(access_token)
+        # img_urls はリスト（配列）になります
+        img_urls = export_design(access_token)
+        
+        print(f"取得した画像の枚数: {len(img_urls)}")
         
         print("3. Sending to LINE...")
-        send_line_message(img_url)
+        send_line_message(img_urls)
         
     except Exception as e:
         print(f"Error: {e}")
