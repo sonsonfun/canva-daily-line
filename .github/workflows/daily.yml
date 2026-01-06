@@ -14,13 +14,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.11' # ← ここを3.11に更新
           
       - name: Install dependencies
-        run: pip install requests google-generativeai Pillow
+        # ↓ google-generativeai を google-genai に変更
+        run: pip install requests google-genai Pillow
         
       - name: Run script
-        id: run_script  # ←ここ重要：Pythonからの出力を受け取るためのID
+        id: run_script
         env:
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
@@ -31,10 +32,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python main.py
 
-      # ★ここが新機能：新しいトークンをGitHubのSecretに上書き保存する
       - name: Update Refresh Token Secret
-        if: steps.run_script.outputs.new_refresh_token != '' # 新しいトークンがある時だけ実行
+        if: steps.run_script.outputs.new_refresh_token != ''
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }} # ステップ1で作った権限を使う
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           gh secret set CANVA_REFRESH_TOKEN --body "${{ steps.run_script.outputs.new_refresh_token }}"
