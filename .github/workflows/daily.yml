@@ -14,11 +14,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # ← 最新版（重要！）
+          python-version: '3.11'
           
       - name: Install dependencies
-        # ↓ 最新のAIライブラリ google-genai をインストール
-        run: pip install requests google-genai Pillow
+        # ↓ AI関連を削除し、必要なものだけにしました
+        run: pip install requests
         
       - name: Run script
         id: run_script
@@ -29,7 +29,7 @@ jobs:
           CANVA_DESIGN_ID: ${{ secrets.CANVA_DESIGN_ID }}
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # GEMINI_API_KEY は削除しました
         run: python main.py
 
       - name: Update Refresh Token Secret
