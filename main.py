@@ -4,7 +4,7 @@ import base64
 import json
 import sys
 import time
-import google.generativeai as genai
+# AI関連のライブラリは削除しました
 
 # 設定
 REFRESH_TOKEN = os.environ["CANVA_REFRESH_TOKEN"]
@@ -25,7 +25,7 @@ def get_new_tokens():
     return resp.json().get("access_token"), resp.json().get("refresh_token")
 
 def export_all_pages(access_token):
-    """1枚目と2枚目を両方書き出して、正体を暴く"""
+    """1枚目と2枚目を両方書き出す"""
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
