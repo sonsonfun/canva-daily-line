@@ -1,40 +1,33 @@
-name: Daily Canva Line
+name: Send Canva Images to LINE
 
 on:
   schedule:
-    - cron: '0 3 * * *' # 日本時間12時に実行
+    # 毎日 日本時間 12:00 (UTC 03:00)
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
-      
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          
+          python-version: '3.9'
+
       - name: Install dependencies
-        # ↓ AI関連を削除し、必要なものだけにしました
-        run: pip install requests
-        
+        run: pip install -r requirements.txt
+
       - name: Run script
-        id: run_script
         env:
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
           CANVA_REFRESH_TOKEN: ${{ secrets.CANVA_REFRESH_TOKEN }}
           CANVA_DESIGN_ID: ${{ secrets.CANVA_DESIGN_ID }}
-          LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-          # GEMINI_API_KEY は削除しました
         run: python main.py
-
-      - name: Update Refresh Token Secret
-        if: steps.run_script.outputs.new_refresh_token != ''
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          gh secret set CANVA_REFRESH_TOKEN --body "${{ steps.run_script.outputs.new_refresh_token }}"
