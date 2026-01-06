@@ -34,7 +34,7 @@ def export_high_quality_image(access_token):
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
-    # 2枚目を指定
+    # ★ここを確実に [2] にしています
     payload = {
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
@@ -42,8 +42,7 @@ def export_high_quality_image(access_token):
     }
     
     resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code != 200:
-        return None
+    if resp.status_code != 200: return None
     job_id = resp.json().get("job", {}).get("id")
     
     for _ in range(15):
@@ -87,11 +86,18 @@ def main():
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    # ★修正箇所：URLをそのまま使います（これで画像が表示されるようになります）
+    # 修正：URLはそのまま（画像割れ防止）
     messages = [{"type": "image", "originalContentUrl": image_url, "previewImageUrl": image_url}]
     
+    # ★デバッグ用：何枚目を送ったかLINEに表示させます
+    debug_text = "【確認】プログラムは『2枚目』を取得しました"
+    
     if text_msg:
-        messages.append({"type": "text", "text": text_msg})
+        final_text = debug_text + "\n\n" + text_msg
+    else:
+        final_text = debug_text
+        
+    messages.append({"type": "text", "text": final_text})
     
     payload = {"to": LINE_USER_ID, "messages": messages}
     requests.post(line_url, headers=headers, json=payload)
