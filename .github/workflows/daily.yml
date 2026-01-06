@@ -2,15 +2,12 @@ name: Send Canva Design to LINE
 
 on:
   schedule:
-    # 日本時間 12:00 は UTC 3:00
     - cron: '0 3 * * *'
-  # 手動実行も可能にする設定
   workflow_dispatch:
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -21,10 +18,10 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run script
+        id: script_step  # IDを追加して出力を受け取れるようにする
         env:
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
@@ -33,3 +30,11 @@ jobs:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python main.py
+
+      # ここが新機能！新しいトークンがあればSecretsを更新する
+      - name: Update Refresh Token Secret
+        if: steps.script_step.outputs.new_refresh_token != ''
+        env:
+          GH_TOKEN: ${{ secrets.PA_TOKEN }}
+        run: |
+          gh secret set CANVA_REFRESH_TOKEN --body "${{ steps.script_step.outputs.new_refresh_token }}"
