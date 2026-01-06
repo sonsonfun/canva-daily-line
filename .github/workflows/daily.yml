@@ -2,7 +2,7 @@ name: Daily Canva Line
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 3 * * *' # 日本時間12時に実行
   workflow_dispatch:
 
 jobs:
@@ -14,10 +14,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # ← ここを3.11に更新
+          python-version: '3.11' # ← 最新版（重要！）
           
       - name: Install dependencies
-        # ↓ google-generativeai を google-genai に変更
+        # ↓ 最新のAIライブラリ google-genai をインストール
         run: pip install requests google-genai Pillow
         
       - name: Run script
