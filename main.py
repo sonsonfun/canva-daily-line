@@ -4,8 +4,7 @@ import base64
 import json
 import sys
 import time
-# google-genaiパッケージへの移行準備として、エラー回避済みの記述を使用
-import google.generativeai as genai
+from google import genai # ← 新しいライブラリ
 from PIL import Image
 from io import BytesIO
 
@@ -18,7 +17,8 @@ LINE_TOKEN = os.environ["LINE_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-genai.configure(api_key=GEMINI_API_KEY)
+# 新しい初期化方法
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_new_tokens():
     url = "https://api.canva.com/rest/v1/oauth/token"
@@ -56,7 +56,6 @@ def export_high_quality_image(access_token):
 
 def analyze_image_with_gemini(image_bytes):
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
         image = Image.open(BytesIO(image_bytes))
         prompt = """
         画像はエクセルの表です。
@@ -64,12 +63,17 @@ def analyze_image_with_gemini(image_bytes):
         2. LINEで見やすいように、箇条書きで整理して教えてください。
         ※もし内容が読み取れない場合は「解析不可」とだけ答えてください。
         """
-        response = model.generate_content([prompt, image])
+        # 新しいAI呼び出し方法
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[prompt, image]
+        )
         result = response.text.strip()
         if "解析不可" in result or not result:
             return None
         return result
-    except Exception:
+    except Exception as e:
+        print(f"Gemini Error: {e}")
         return None
 
 def main():
@@ -84,13 +88,14 @@ def main():
     if not image_url: sys.exit(1)
 
     img_resp = requests.get(image_url)
+    
     # AI解析を実行
     text_msg = analyze_image_with_gemini(img_resp.content)
     
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    # キャッシュ回避用（常に新しいURLに見せる）
+    # キャッシュ回避用
     timestamp = int(time.time())
     cache_free_url = f"{image_url}&t={timestamp}"
     
