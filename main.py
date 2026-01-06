@@ -4,7 +4,7 @@ import base64
 import json
 import sys
 import time
-from google import genai # ← 新しいライブラリ
+from google import genai
 from PIL import Image
 from io import BytesIO
 
@@ -17,7 +17,7 @@ LINE_TOKEN = os.environ["LINE_TOKEN"]
 LINE_USER_ID = os.environ["LINE_USER_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
-# 新しい初期化方法
+# 最新のAI初期化
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_new_tokens():
@@ -31,39 +31,44 @@ def get_new_tokens():
         return None, None
     return resp.json().get("access_token"), resp.json().get("refresh_token")
 
-def export_high_quality_image(access_token):
-    """2枚目（Page 2）を書き出す"""
+def export_images(access_token):
+    """1枚目と2枚目をまとめて書き出す"""
+    print("Canva: 画像を生成中...")
     url = "https://api.canva.com/rest/v1/exports"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     
     payload = {
         "design_id": DESIGN_ID, 
         "format": {"type": "jpg", "quality": 100}, 
-        "pages": [2]
+        "pages": [1, 2] # ← 1枚目と2枚目を指定
     }
     
     resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code != 200: return None
+    if resp.status_code != 200:
+        print(f"Export Error: {resp.text}")
+        return None
+        
     job_id = resp.json().get("job", {}).get("id")
     
-    for _ in range(15):
+    for _ in range(20): # 最大60秒待機
         time.sleep(3)
         check_resp = requests.get(f"{url}/{job_id}", headers=headers)
         job = check_resp.json().get("job", {})
         if job.get("status") == "success":
-            return job.get("urls", [])[0]
+            # 成功したら画像のURLリストを返す
+            return job.get("urls", [])
     return None
 
-def analyze_image_with_gemini(image_bytes):
+def analyze_image(image_bytes, page_num):
+    """画像をAIで解析する"""
+    print(f"Gemini: {page_num}枚目を解析中...")
     try:
         image = Image.open(BytesIO(image_bytes))
-        prompt = """
-        画像はエクセルの表です。
-        1. 項目と数値を正確に読み取ってください。
-        2. LINEで見やすいように、箇条書きで整理して教えてください。
-        ※もし内容が読み取れない場合は「解析不可」とだけ答えてください。
+        prompt = f"""
+        これは{page_num}枚目の画像（エクセル表や資料）です。
+        内容を読み取り、重要なポイントを箇条書きでまとめてください。
+        もし文字がない画像なら「画像のみ」と判断してください。
         """
-        # 新しいAI呼び出し方法
         response = client.models.generate_content(
             model='gemini-1.5-flash',
             contents=[prompt, image]
@@ -77,36 +82,50 @@ def analyze_image_with_gemini(image_bytes):
         return None
 
 def main():
+    # 1. トークン更新
     access_token, new_refresh_token = get_new_tokens()
     if not access_token: sys.exit(1)
 
+    # 新しいトークンをGitHubに保存
     if new_refresh_token:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
             f.write(f"new_refresh_token={new_refresh_token}\n")
 
-    image_url = export_high_quality_image(access_token)
-    if not image_url: sys.exit(1)
+    # 2. 画像URLを取得（2枚分）
+    image_urls = export_images(access_token)
+    if not image_urls:
+        print("画像の取得に失敗しました")
+        sys.exit(1)
 
-    img_resp = requests.get(image_url)
-    
-    # AI解析を実行
-    text_msg = analyze_image_with_gemini(img_resp.content)
-    
     line_url = "https://api.line.me/v2/bot/message/push"
     headers = {"Authorization": f"Bearer {LINE_TOKEN}", "Content-Type": "application/json"}
     
-    # キャッシュ回避用
+    # キャッシュ回避用の時間スタンプ
     timestamp = int(time.time())
-    cache_free_url = f"{image_url}&t={timestamp}"
-    
-    messages = [{"type": "image", "originalContentUrl": cache_free_url, "previewImageUrl": cache_free_url}]
-    
-    if text_msg:
-        messages.append({"type": "text", "text": text_msg})
-    
-    payload = {"to": LINE_USER_ID, "messages": messages}
-    requests.post(line_url, headers=headers, json=payload)
-    print("送信完了")
+
+    # 3. 1枚ずつ処理してLINE送信
+    for i, url in enumerate(image_urls):
+        page_num = i + 1 # 1ページ目、2ページ目...
+        
+        # 画像ダウンロード
+        img_resp = requests.get(url)
+        
+        # AI解析
+        text_msg = analyze_image(img_resp.content, page_num)
+        
+        # LINEメッセージ作成
+        cache_free_url = f"{url}&t={timestamp}_{page_num}"
+        messages = [{"type": "image", "originalContentUrl": cache_free_url, "previewImageUrl": cache_free_url}]
+        
+        if text_msg:
+            header = f"【{page_num}枚目の解析】\n"
+            messages.append({"type": "text", "text": header + text_msg})
+        
+        # 送信
+        payload = {"to": LINE_USER_ID, "messages": messages}
+        requests.post(line_url, headers=headers, json=payload)
+        print(f"{page_num}枚目を送信しました")
+        time.sleep(1) # 送信順序を守るため少し待つ
 
 if __name__ == "__main__":
     main()
