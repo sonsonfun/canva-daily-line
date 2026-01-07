@@ -1,123 +1,87 @@
 import os
-import time
 import requests
-import json
 import base64
+import json
 
-# 環境変数
-CANVA_CLIENT_ID = os.environ["CANVA_CLIENT_ID"]
-CANVA_CLIENT_SECRET = os.environ["CANVA_CLIENT_SECRET"]
-CANVA_REFRESH_TOKEN = os.environ["CANVA_REFRESH_TOKEN"]
-CANVA_DESIGN_ID = os.environ["CANVA_DESIGN_ID"]
-LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-LINE_USER_ID = os.environ["LINE_USER_ID"]
+def main():
+    # --- 1. 環境変数の取得 ---
+    CANVA_CLIENT_ID = os.environ.get("CANVA_CLIENT_ID")
+    CANVA_CLIENT_SECRET = os.environ.get("CANVA_CLIENT_SECRET")
+    CANVA_REFRESH_TOKEN = os.environ.get("CANVA_REFRESH_TOKEN")
+    CANVA_DESIGN_ID = os.environ.get("CANVA_DESIGN_ID")
+    LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 
-def refresh_canva_token():
-    url = "https://api.canva.com/rest/v1/oauth/token"
+    # 環境変数が足りない場合のチェック
+    if not all([CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, CANVA_REFRESH_TOKEN, LINE_CHANNEL_ACCESS_TOKEN]):
+        print("Error: 必要な環境変数が設定されていません。")
+        return
+
+    # --- 2. Canva アクセストークンの更新 (Refresh Token Flow) ---
+    print("Canvaトークンを更新中...")
+    
+    # Basic認証ヘッダーの作成
     auth_str = f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}"
-    b64_auth = base64.b64encode(auth_str.encode()).decode()
+    b64_auth_str = base64.b64encode(auth_str.encode()).decode()
 
+    token_url = "https://api.canva.com/rest/v1/oauth/token"
     headers = {
-        "Authorization": f"Basic {b64_auth}",
+        "Authorization": f"Basic {b64_auth_str}",
         "Content-Type": "application/x-www-form-urlencoded"
     }
     data = {
         "grant_type": "refresh_token",
         "refresh_token": CANVA_REFRESH_TOKEN
     }
-    
-    resp = requests.post(url, headers=headers, data=data)
-    if resp.status_code != 200:
-        print(f"Token Refresh Error Body: {resp.text}")
-        raise Exception(f"Canva Token Refresh Failed: {resp.status_code}")
-    
-    tokens = resp.json()
-    return tokens["access_token"], tokens.get("refresh_token")
 
-def export_design(access_token):
-    url = "https://api.canva.com/rest/v1/exports"
-    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    response = requests.post(token_url, headers=headers, data=data)
     
-    # ★修正: 全ページ出力のため、pagesの指定を削除しました
-    data = {
-        "design_id": CANVA_DESIGN_ID,
-        "format": {"type": "jpg", "quality": 80},
-        "type": "image"
+    if response.status_code != 200:
+        print(f"【エラー】トークン更新失敗: {response.status_code} {response.text}")
+        exit(1)
+
+    tokens = response.json()
+    access_token = tokens.get("access_token")
+    new_refresh_token = tokens.get("refresh_token")
+
+    # --- 3. 新しいリフレッシュトークンをGitHub Actionsに渡す ---
+    # YAML側の steps.script_step.outputs.new_refresh_token で受け取れるようにする
+    if new_refresh_token:
+        print(f"新しいリフレッシュトークンを取得しました。")
+        # GITHUB_OUTPUT 環境変数が存在する場合（GitHub Actions上で実行している場合）
+        if "GITHUB_OUTPUT" in os.environ:
+            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                f.write(f"new_refresh_token={new_refresh_token}\n")
+    
+    # --- 4. Canvaから情報を取得する (必要であれば実装) ---
+    # ※ここでは例として、デザインIDを含んだメッセージを作成します。
+    # もしCanva APIでデザインの詳細を取得したい場合は、
+    # ここで access_token を使って requests.get(...) してください。
+    
+    message_text = f"【お知らせ】\nCanvaデザイン(ID: {CANVA_DESIGN_ID}) の定期通知です。\n\n今日も一日がんばりましょう！"
+
+    # --- 5. LINEへブロードキャスト送信 (全員に送信) ---
+    print("LINEへ一斉送信を開始します...")
+
+    line_url = "https://api.line.me/v2/bot/message/broadcast"
+    line_headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
-    
-    resp = requests.post(url, headers=headers, json=data)
-    if resp.status_code != 200:
-        raise Exception(f"Export Job Creation Failed: {resp.text}")
-    
-    job_id = resp.json()["job"]["id"]
-    print(f"Export Job ID: {job_id}")
-
-    job_url = f"{url}/{job_id}"
-    while True:
-        time.sleep(3)
-        check_resp = requests.get(job_url, headers=headers)
-        status = check_resp.json()["job"]["status"]
-        
-        if status == "success":
-            return check_resp.json()["job"]["urls"]
-        elif status == "failed":
-            raise Exception("Canva Export Job Failed")
-        print("Waiting for export...")
-
-def send_line_message(image_urls):
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-        "Content-Type": "application/json"
+    line_payload = {
+        "messages": [
+            {
+                "type": "text",
+                "text": message_text
+            }
+        ]
     }
-    
-    # ★修正: 枚数が変わっても対応できるように文言を動的に変更
-    messages = [
-        {
-            "type": "text", 
-            "text": f"本日のデザイン({len(image_urls)}枚)をお届けします！"
-        }
-    ]
-    
-    # URLのリストをループして、画像メッセージを追加
-    for img_url in image_urls:
-        messages.append({
-            "type": "image", 
-            "originalContentUrl": img_url, 
-            "previewImageUrl": img_url
-        })
 
-    # LINE Messaging API制限: メッセージは最大5件まで
-    # (テキスト1件 + 画像4枚までならこのまま送れます)
-    data = {
-        "to": LINE_USER_ID,
-        "messages": messages[:5] # 万が一5枚以上あってもエラーにならないようスライスで安全策
-    }
-    
-    resp = requests.post(url, headers=headers, json=data)
-    if resp.status_code != 200:
-        raise Exception(f"LINE Send Failed: {resp.text}")
-    print("LINE message sent successfully!")
+    line_response = requests.post(line_url, headers=line_headers, json=line_payload)
+
+    if line_response.status_code == 200:
+        print("LINE送信成功！(Broadcast)")
+    else:
+        print(f"LINE送信失敗: {line_response.status_code} {line_response.text}")
 
 if __name__ == "__main__":
-    try:
-        print("1. Refreshing Canva Token...")
-        access_token, new_refresh_token = refresh_canva_token()
-        
-        if new_refresh_token:
-            print(f"::add-mask::{new_refresh_token}")
-            with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
-                print(f"new_refresh_token={new_refresh_token}", file=fh)
-            print("✨ New refresh token captured.")
-        
-        print("2. Exporting Design...")
-        img_urls = export_design(access_token)
-        
-        print(f"取得した画像の枚数: {len(img_urls)}")
-        
-        print("3. Sending to LINE...")
-        send_line_message(img_urls)
-        
-    except Exception as e:
-        print(f"Error: {e}")
-        exit(1)
+    main()
