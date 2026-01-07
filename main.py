@@ -1,6 +1,7 @@
 import os
 import requests
 import base64
+import time
 import json
 
 def main():
@@ -45,73 +46,99 @@ def main():
         with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write(f"new_refresh_token={new_refresh_token}\n")
 
-    # --- 3. Canvaから実際のデザイン情報を取得 ---
-    print(f"デザイン情報を取得中 (ID: {CANVA_DESIGN_ID})...")
+    # --- 3. デザインを画像(JPG)としてエクスポート (全ページ取得のため) ---
+    print(f"デザイン(ID: {CANVA_DESIGN_ID}) の書き出しを開始します...")
     
-    design_url = f"https://api.canva.com/rest/v1/designs/{CANVA_DESIGN_ID}"
-    design_headers = {
-        "Authorization": f"Bearer {access_token}"
+    export_url = "https://api.canva.com/rest/v1/exports"
+    export_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
     }
-    
-    design_resp = requests.get(design_url, headers=design_headers)
-    
-    # デフォルトのメッセージ（取得失敗時用）
-    design_title = "タイトル不明"
-    view_url = "URL不明"
-    thumbnail_url = ""
-
-    if design_resp.status_code == 200:
-        design_data = design_resp.json()
-        # デザイン情報の取得 (APIのレスポンス構造に合わせて取得)
-        design = design_data.get("design", {})
-        design_title = design.get("title", "無題のデザイン")
-        
-        # URLの取得 (view用URLがあればそれを使う)
-        urls = design.get("urls", {})
-        view_url = urls.get("view_url", urls.get("edit_url", ""))
-        
-        # サムネイル画像の取得
-        thumbnail = design.get("thumbnail", {})
-        thumbnail_url = thumbnail.get("url", "")
-    else:
-        print(f"【警告】デザイン情報の取得に失敗しました: {design_resp.status_code} {design_resp.text}")
-
-    # --- 4. LINEへ送るメッセージを作成 ---
-    # テキストメッセージ
-    message_text = f"【定期通知】\n本日のデザイン: {design_title}\n\n確認はこちら:\n{view_url}"
-
-    messages_payload = [
-        {
-            "type": "text",
-            "text": message_text
+    # JPG形式で書き出し（全ページ）
+    export_data = {
+        "design_id": CANVA_DESIGN_ID,
+        "format": {
+            "type": "jpg",
+            "quality": 100
         }
-    ]
+    }
 
-    # サムネイル画像があれば、画像もLINEに送る設定を追加
-    if thumbnail_url:
-        messages_payload.append({
+    # エクスポートジョブの作成
+    job_resp = requests.post(export_url, headers=export_headers, json=export_data)
+    
+    if job_resp.status_code != 200:
+        print(f"【エラー】書き出し開始失敗: {job_resp.status_code} {job_resp.text}")
+        return
+
+    job_id = job_resp.json().get("job", {}).get("id")
+    print(f"書き出しジョブID: {job_id}")
+
+    # --- 4. 書き出し完了まで待機 (ポーリング) ---
+    image_urls = []
+    
+    for _ in range(20): # 最大20回確認 (約40-60秒待機)
+        time.sleep(3) # 3秒待つ
+        
+        status_url = f"https://api.canva.com/rest/v1/exports/{job_id}"
+        status_resp = requests.get(status_url, headers=export_headers)
+        
+        if status_resp.status_code == 200:
+            job_status = status_resp.json().get("job", {})
+            state = job_status.get("status")
+            
+            if state == "success":
+                print("書き出し完了！")
+                image_urls = job_status.get("urls", [])
+                break
+            elif state == "failed":
+                print("書き出しに失敗しました。")
+                return
+        else:
+            print(f"ステータス確認エラー: {status_resp.status_code}")
+    
+    if not image_urls:
+        print("画像の取得に失敗、またはタイムアウトしました。")
+        return
+
+    print(f"取得した画像枚数: {len(image_urls)}枚")
+
+    # --- 5. LINEへ送信 (Broadcast) ---
+    print("LINEへ送信を開始します...")
+    
+    # 送信用のメッセージリストを作成
+    messages = []
+
+    # 1つ目のフキダシ: テキスト
+    messages.append({
+        "type": "text",
+        "text": f"本日のデザイン({len(image_urls)}枚)をお届けします！"
+    })
+
+    # 2つ目以降のフキダシ: 画像 (最大4枚まで追加可能 ※LINE仕様で合計5フキダシまで)
+    # 枚数が多い場合を考慮して、最初の4枚までを画像として添付します
+    for img_url in image_urls[:4]:
+        messages.append({
             "type": "image",
-            "originalContentUrl": thumbnail_url,
-            "previewImageUrl": thumbnail_url
+            "originalContentUrl": img_url,
+            "previewImageUrl": img_url
         })
 
-    # --- 5. LINEへブロードキャスト送信 ---
-    print("LINEへ一斉送信を開始します...")
     line_url = "https://api.line.me/v2/bot/message/broadcast"
     line_headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
     line_payload = {
-        "messages": messages_payload
+        "messages": messages
     }
 
     line_resp = requests.post(line_url, headers=line_headers, json=line_payload)
 
     if line_resp.status_code == 200:
-        print("LINE送信成功！(Broadcast)")
+        print("LINE送信成功！")
     else:
         print(f"LINE送信失敗: {line_resp.status_code} {line_resp.text}")
+        # もし画像枚数が多すぎてエラーになった場合の予備処理（テキストだけ送るなど）を入れることも可能です
 
 if __name__ == "__main__":
     main()
