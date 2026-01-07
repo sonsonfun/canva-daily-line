@@ -11,77 +11,107 @@ def main():
     CANVA_DESIGN_ID = os.environ.get("CANVA_DESIGN_ID")
     LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
 
-    # 環境変数が足りない場合のチェック
-    if not all([CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, CANVA_REFRESH_TOKEN, LINE_CHANNEL_ACCESS_TOKEN]):
+    if not all([CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, CANVA_REFRESH_TOKEN, LINE_CHANNEL_ACCESS_TOKEN, CANVA_DESIGN_ID]):
         print("Error: 必要な環境変数が設定されていません。")
         return
 
-    # --- 2. Canva アクセストークンの更新 (Refresh Token Flow) ---
+    # --- 2. Canva アクセストークンの更新 ---
     print("Canvaトークンを更新中...")
-    
-    # Basic認証ヘッダーの作成
     auth_str = f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}"
     b64_auth_str = base64.b64encode(auth_str.encode()).decode()
 
     token_url = "https://api.canva.com/rest/v1/oauth/token"
-    headers = {
+    token_headers = {
         "Authorization": f"Basic {b64_auth_str}",
         "Content-Type": "application/x-www-form-urlencoded"
     }
-    data = {
+    token_data = {
         "grant_type": "refresh_token",
         "refresh_token": CANVA_REFRESH_TOKEN
     }
 
-    response = requests.post(token_url, headers=headers, data=data)
+    token_resp = requests.post(token_url, headers=token_headers, data=token_data)
     
-    if response.status_code != 200:
-        print(f"【エラー】トークン更新失敗: {response.status_code} {response.text}")
+    if token_resp.status_code != 200:
+        print(f"【エラー】トークン更新失敗: {token_resp.status_code} {token_resp.text}")
         exit(1)
 
-    tokens = response.json()
+    tokens = token_resp.json()
     access_token = tokens.get("access_token")
     new_refresh_token = tokens.get("refresh_token")
 
-    # --- 3. 新しいリフレッシュトークンをGitHub Actionsに渡す ---
-    # YAML側の steps.script_step.outputs.new_refresh_token で受け取れるようにする
-    if new_refresh_token:
-        print(f"新しいリフレッシュトークンを取得しました。")
-        # GITHUB_OUTPUT 環境変数が存在する場合（GitHub Actions上で実行している場合）
-        if "GITHUB_OUTPUT" in os.environ:
-            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                f.write(f"new_refresh_token={new_refresh_token}\n")
-    
-    # --- 4. Canvaから情報を取得する (必要であれば実装) ---
-    # ※ここでは例として、デザインIDを含んだメッセージを作成します。
-    # もしCanva APIでデザインの詳細を取得したい場合は、
-    # ここで access_token を使って requests.get(...) してください。
-    
-    message_text = f"【お知らせ】\nCanvaデザイン(ID: {CANVA_DESIGN_ID}) の定期通知です。\n\n今日も一日がんばりましょう！"
+    # 新しいリフレッシュトークンをGitHub Actions出力へ保存
+    if new_refresh_token and "GITHUB_OUTPUT" in os.environ:
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"new_refresh_token={new_refresh_token}\n")
 
-    # --- 5. LINEへブロードキャスト送信 (全員に送信) ---
+    # --- 3. Canvaから実際のデザイン情報を取得 ---
+    print(f"デザイン情報を取得中 (ID: {CANVA_DESIGN_ID})...")
+    
+    design_url = f"https://api.canva.com/rest/v1/designs/{CANVA_DESIGN_ID}"
+    design_headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    
+    design_resp = requests.get(design_url, headers=design_headers)
+    
+    # デフォルトのメッセージ（取得失敗時用）
+    design_title = "タイトル不明"
+    view_url = "URL不明"
+    thumbnail_url = ""
+
+    if design_resp.status_code == 200:
+        design_data = design_resp.json()
+        # デザイン情報の取得 (APIのレスポンス構造に合わせて取得)
+        design = design_data.get("design", {})
+        design_title = design.get("title", "無題のデザイン")
+        
+        # URLの取得 (view用URLがあればそれを使う)
+        urls = design.get("urls", {})
+        view_url = urls.get("view_url", urls.get("edit_url", ""))
+        
+        # サムネイル画像の取得
+        thumbnail = design.get("thumbnail", {})
+        thumbnail_url = thumbnail.get("url", "")
+    else:
+        print(f"【警告】デザイン情報の取得に失敗しました: {design_resp.status_code} {design_resp.text}")
+
+    # --- 4. LINEへ送るメッセージを作成 ---
+    # テキストメッセージ
+    message_text = f"【定期通知】\n本日のデザイン: {design_title}\n\n確認はこちら:\n{view_url}"
+
+    messages_payload = [
+        {
+            "type": "text",
+            "text": message_text
+        }
+    ]
+
+    # サムネイル画像があれば、画像もLINEに送る設定を追加
+    if thumbnail_url:
+        messages_payload.append({
+            "type": "image",
+            "originalContentUrl": thumbnail_url,
+            "previewImageUrl": thumbnail_url
+        })
+
+    # --- 5. LINEへブロードキャスト送信 ---
     print("LINEへ一斉送信を開始します...")
-
     line_url = "https://api.line.me/v2/bot/message/broadcast"
     line_headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
     line_payload = {
-        "messages": [
-            {
-                "type": "text",
-                "text": message_text
-            }
-        ]
+        "messages": messages_payload
     }
 
-    line_response = requests.post(line_url, headers=line_headers, json=line_payload)
+    line_resp = requests.post(line_url, headers=line_headers, json=line_payload)
 
-    if line_response.status_code == 200:
+    if line_resp.status_code == 200:
         print("LINE送信成功！(Broadcast)")
     else:
-        print(f"LINE送信失敗: {line_response.status_code} {line_response.text}")
+        print(f"LINE送信失敗: {line_resp.status_code} {line_resp.text}")
 
 if __name__ == "__main__":
     main()
