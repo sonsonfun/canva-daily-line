@@ -1,15 +1,20 @@
-name: Send Canva Design to LINE
+name: Daily Canva to LINE Post
 
 on:
   schedule:
-    # ★修正: 月〜金の日本時間12:00 (UTC 03:00) に実行
-    # 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri
+    # JST 12:00 (UTC 03:00) Mon-Fri
     - cron: '0 3 * * 1-5'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    env:
+      PYTHONIOENCODING: utf-8
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -17,25 +22,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install -r requirements.txt
 
       - name: Run script
-        id: script_step
         env:
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
-          CANVA_REFRESH_TOKEN: ${{ secrets.CANVA_REFRESH_TOKEN }}
           CANVA_DESIGN_ID: ${{ secrets.CANVA_DESIGN_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          # LINE_USER_ID は全員送信(broadcast)になったので削除しました
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python main.py
 
-      - name: Update Refresh Token Secret
-        if: steps.script_step.outputs.new_refresh_token != ''
-        env:
-          GH_TOKEN: ${{ secrets.PA_TOKEN }}
+      # 【重要】Pythonがエラーでも、鍵の保存だけは必ず実行する設定
+      - name: Commit and push changes
+        if: always()
         run: |
-          gh secret set CANVA_REFRESH_TOKEN --body "${{ steps.script_step.outputs.new_refresh_token }}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add canva_token.txt
+          # 変更がある場合のみコミット
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update Canva refresh token [skip ci]" && git push)
