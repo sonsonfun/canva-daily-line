@@ -92,7 +92,7 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # 【変更点】全ての画像をループせず、1枚目だけを対象にする
+    # 1枚目だけを対象にする
     print("Geminiで1ページ目の画像を解析中...")
     
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -114,7 +114,7 @@ def analyze_image_with_gemini(image_urls):
     else:
         raise Exception("画像のダウンロードに失敗しました")
     
-    # プロンプト（文言を少し調整しました）
+    # プロンプト
     prompt = """
 1ページ目の画像を読み取り、以下のルールに従って人物ごとにタスクを文字起こししてください。
 
@@ -148,17 +148,16 @@ def send_line_message(text, image_urls):
     
     messages = []
     
-    # テキストメッセージ
-    messages.append(TextSendMessage(text=text))
-    
-    # 画像メッセージ（最大4枚まで）
-    # ※LINEには引き続き全ページ（最大4枚）送る仕様にしていますが、
-    # 1枚目だけ送りたい場合は `image_urls[:1]` に変更してください。
+    # --- 1. 画像メッセージを先に追加 ---
+    # (最大4枚まで、LINEの一斉送信上限5通ルールに収めるため)
     max_images = 4
     for i, url in enumerate(image_urls[:max_images]):
         messages.append(
             ImageSendMessage(original_content_url=url, preview_image_url=url)
         )
+    
+    # --- 2. テキストメッセージを後に追加 ---
+    messages.append(TextSendMessage(text=text))
     
     # broadcastを使用
     line_bot_api.broadcast(messages)
