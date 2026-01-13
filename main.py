@@ -1,144 +1,182 @@
 import os
-import requests
-import base64
 import time
+import base64
+import requests
 import json
+from google import genai
+from google.genai import types
+from linebot import LineBotApi
+from linebot.models import TextSendMessage, ImageSendMessage
 
-def main():
-    # --- 1. 環境変数の取得 ---
-    CANVA_CLIENT_ID = os.environ.get("CANVA_CLIENT_ID")
-    CANVA_CLIENT_SECRET = os.environ.get("CANVA_CLIENT_SECRET")
-    CANVA_REFRESH_TOKEN = os.environ.get("CANVA_REFRESH_TOKEN")
-    CANVA_DESIGN_ID = os.environ.get("CANVA_DESIGN_ID")
-    LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+# --- 環境変数の取得 ---
+CANVA_CLIENT_ID = os.environ["CANVA_CLIENT_ID"]
+CANVA_CLIENT_SECRET = os.environ["CANVA_CLIENT_SECRET"]
+CANVA_DESIGN_ID = os.environ["CANVA_DESIGN_ID"]
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 
-    if not all([CANVA_CLIENT_ID, CANVA_CLIENT_SECRET, CANVA_REFRESH_TOKEN, LINE_CHANNEL_ACCESS_TOKEN, CANVA_DESIGN_ID]):
-        print("Error: 必要な環境変数が設定されていません。")
-        return
+# トークンファイルのパス
+TOKEN_FILE = "canva_token.txt"
 
-    # --- 2. Canva アクセストークンの更新 ---
-    print("Canvaトークンを更新中...")
+def get_canva_access_token():
+    try:
+        with open(TOKEN_FILE, "r") as f:
+            refresh_token = f.read().strip()
+    except FileNotFoundError:
+        raise Exception(f"{TOKEN_FILE} が見つかりません。最新のトークンを貼ったファイルを作成してください。")
+
+    url = "https://api.canva.com/rest/v1/oauth/token"
     auth_str = f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}"
-    b64_auth_str = base64.b64encode(auth_str.encode()).decode()
-
-    token_url = "https://api.canva.com/rest/v1/oauth/token"
-    token_headers = {
-        "Authorization": f"Basic {b64_auth_str}",
+    b64_auth = base64.b64encode(auth_str.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {b64_auth}",
         "Content-Type": "application/x-www-form-urlencoded"
     }
-    token_data = {
+    
+    data = {
         "grant_type": "refresh_token",
-        "refresh_token": CANVA_REFRESH_TOKEN
+        "refresh_token": refresh_token
     }
 
-    token_resp = requests.post(token_url, headers=token_headers, data=token_data)
+    print("Canvaアクセストークンを更新中...")
+    resp = requests.post(url, headers=headers, data=data)
     
-    if token_resp.status_code != 200:
-        print(f"【エラー】トークン更新失敗: {token_resp.status_code} {token_resp.text}")
-        exit(1)
-
-    tokens = token_resp.json()
-    access_token = tokens.get("access_token")
-    new_refresh_token = tokens.get("refresh_token")
-
-    # 新しいリフレッシュトークンをGitHub Actions出力へ保存
-    if new_refresh_token and "GITHUB_OUTPUT" in os.environ:
-        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-            f.write(f"new_refresh_token={new_refresh_token}\n")
-
-    # --- 3. デザインを画像(JPG)としてエクスポート (全ページ取得のため) ---
-    print(f"デザイン(ID: {CANVA_DESIGN_ID}) の書き出しを開始します...")
+    if resp.status_code != 200:
+        raise Exception(f"Canva Token Error: {resp.status_code} {resp.text}")
     
-    export_url = "https://api.canva.com/rest/v1/exports"
-    export_headers = {
+    tokens = resp.json()
+    
+    if "refresh_token" in tokens:
+        new_refresh_token = tokens["refresh_token"]
+        with open(TOKEN_FILE, "w") as f:
+            f.write(new_refresh_token)
+        print("★新しいリフレッシュトークンを canva_token.txt に保存しました。")
+    
+    return tokens["access_token"]
+
+def export_canva_design(access_token):
+    url = "https://api.canva.com/rest/v1/exports"
+    headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-    # JPG形式で書き出し（全ページ）
-    export_data = {
+    
+    data = {
         "design_id": CANVA_DESIGN_ID,
-        "format": {
-            "type": "jpg",
-            "quality": 100
-        }
+        "format": {"type": "png"}
     }
-
-    # エクスポートジョブの作成
-    job_resp = requests.post(export_url, headers=export_headers, json=export_data)
     
-    if job_resp.status_code != 200:
-        print(f"【エラー】書き出し開始失敗: {job_resp.status_code} {job_resp.text}")
-        return
-
-    job_id = job_resp.json().get("job", {}).get("id")
-    print(f"書き出しジョブID: {job_id}")
-
-    # --- 4. 書き出し完了まで待機 (ポーリング) ---
-    image_urls = []
+    print(f"デザイン({CANVA_DESIGN_ID})の高画質エクスポート(PNG)を開始...")
+    resp = requests.post(url, headers=headers, json=data)
     
-    for _ in range(20): # 最大20回確認 (約40-60秒待機)
-        time.sleep(3) # 3秒待つ
-        
-        status_url = f"https://api.canva.com/rest/v1/exports/{job_id}"
-        status_resp = requests.get(status_url, headers=export_headers)
-        
+    if resp.status_code != 200:
+        raise Exception(f"Canva Export Error: {resp.text}")
+    
+    job_id = resp.json()["job"]["id"]
+    
+    for _ in range(30):
+        time.sleep(3)
+        status_resp = requests.get(f"{url}/{job_id}", headers=headers)
         if status_resp.status_code == 200:
-            job_status = status_resp.json().get("job", {})
-            state = job_status.get("status")
+            job_data = status_resp.json()["job"]
+            status = job_data["status"]
             
-            if state == "success":
-                print("書き出し完了！")
-                image_urls = job_status.get("urls", [])
-                break
-            elif state == "failed":
-                print("書き出しに失敗しました。")
-                return
-        else:
-            print(f"ステータス確認エラー: {status_resp.status_code}")
+            if status == "success":
+                image_urls = job_data["urls"]
+                print(f"エクスポート成功: {len(image_urls)}枚の画像を取得しました")
+                return image_urls
+            elif status == "failed":
+                raise Exception(f"Canva Export Failed: {job_data.get('error')}")
+    
+    raise Exception("Canva Export Timeout")
+
+def analyze_image_with_gemini(image_urls):
+    # 【変更点】全ての画像をループせず、1枚目だけを対象にする
+    print("Geminiで1ページ目の画像を解析中...")
+    
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    contents_list = []
     
     if not image_urls:
-        print("画像の取得に失敗、またはタイムアウトしました。")
-        return
+        raise Exception("画像URLが取得できませんでした")
 
-    print(f"取得した画像枚数: {len(image_urls)}枚")
-
-    # --- 5. LINEへ送信 (Broadcast) ---
-    print("LINEへ送信を開始します...")
+    # リストの最初のURL（1ページ目）のみを取得
+    first_url = image_urls[0]
     
-    # 送信用のメッセージリストを作成
-    messages = []
-
-    # 1つ目のフキダシ: テキスト
-    messages.append({
-        "type": "text",
-        "text": f"本日のデザイン({len(image_urls)}枚)をお届けします！"
-    })
-
-    # 2つ目以降のフキダシ: 画像 (最大4枚まで追加可能 ※LINE仕様で合計5フキダシまで)
-    # 枚数が多い場合を考慮して、最初の4枚までを画像として添付します
-    for img_url in image_urls[:4]:
-        messages.append({
-            "type": "image",
-            "originalContentUrl": img_url,
-            "previewImageUrl": img_url
-        })
-
-    line_url = "https://api.line.me/v2/bot/message/broadcast"
-    line_headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
-    }
-    line_payload = {
-        "messages": messages
-    }
-
-    line_resp = requests.post(line_url, headers=line_headers, json=line_payload)
-
-    if line_resp.status_code == 200:
-        print("LINE送信成功！")
+    print(f"  - 1ページ目をダウンロード中...")
+    img_resp = requests.get(first_url)
+    if img_resp.status_code == 200:
+        contents_list.append(
+            types.Part.from_bytes(data=img_resp.content, mime_type='image/png')
+        )
     else:
-        print(f"LINE送信失敗: {line_resp.status_code} {line_resp.text}")
-        # もし画像枚数が多すぎてエラーになった場合の予備処理（テキストだけ送るなど）を入れることも可能です
+        raise Exception("画像のダウンロードに失敗しました")
+    
+    # プロンプト（文言を少し調整しました）
+    prompt = """
+画像を読み取り、以下のルールに従って人物ごとにタスクを文字起こししてください。
+
+【出力ルール】
+1. 人物ごとにセクションを分けてください（見出し記号「###」は使わず、「【氏名】」の形式で区切ってください）。
+2. 各タスクは「期日：内容」の形式で記述してください。
+   - 期日の表記は「M/D」形式（例：1/15）に統一してください。
+3. リストの並び順は、日付が早い順（昇順）に並べ替えてください。
+   - 期日の記載がないタスクは、リストの最後に配置してください。
+4. タスク内容が空欄の場合は「（なし）」と記載してください。
+5. 全ての出力の最後に、画像の内容とは無関係に、以下のリンクを出してください。
+
+https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
+    """
+    
+    contents_list.append(prompt)
+
+    response = client.models.generate_content(
+        model='gemini-flash-latest',
+        contents=contents_list
+    )
+    
+    if not response.text:
+        raise Exception("Gemini returned empty response")
+        
+    return response.text
+
+def send_line_message(text, image_urls):
+    print("LINE友だち全員へ一斉送信中...")
+    line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+    
+    messages = []
+    
+    # テキストメッセージ
+    messages.append(TextSendMessage(text=text))
+    
+    # 画像メッセージ（最大4枚まで）
+    # ※LINEには引き続き全ページ（最大4枚）送る仕様にしていますが、
+    # 1枚目だけ送りたい場合は `image_urls[:1]` に変更してください。
+    max_images = 4
+    for i, url in enumerate(image_urls[:max_images]):
+        messages.append(
+            ImageSendMessage(original_content_url=url, preview_image_url=url)
+        )
+    
+    # broadcastを使用
+    line_bot_api.broadcast(messages)
+    
+    print("送信完了")
+
+def main():
+    try:
+        print("--- 処理開始 ---")
+        access_token = get_canva_access_token()
+        image_urls = export_canva_design(access_token)
+        gemini_text = analyze_image_with_gemini(image_urls)
+        print(f"生成されたメッセージ:\n{gemini_text}")
+        send_line_message(gemini_text, image_urls)
+        print("--- 全工程完了 ---")
+    except Exception as e:
+        print(f"エラー発生: {e}")
+        exit(1)
 
 if __name__ == "__main__":
     main()
