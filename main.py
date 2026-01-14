@@ -96,7 +96,7 @@ def export_canva_design(access_token):
 def analyze_image_with_gemini(image_urls):
     # ★変更点：モデル名の修正
     # gemini-flash-latest が動いた実績に合わせて、-latest 付きを使用します
-    model_name = 'gemini-1.5-pro-latest' 
+    model_name = 'gemini-1.5-pro-002' 
     
     print(f"Gemini ({model_name}) で1ページ目の画像を解析中...")
     
