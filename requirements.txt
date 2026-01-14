@@ -1,4 +1,3 @@
-response = client.models.generate_content(
-        model='gemini-1.5-pro', # ここをProに変更！
-        contents=contents_list
-    )
+google-genai
+line-bot-sdk
+requests
