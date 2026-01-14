@@ -94,8 +94,11 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # ★変更点：モデルをPro版にするため、ログを変更
-    print("Gemini (1.5 Pro) で1ページ目の画像を解析中...")
+    # ★変更点：モデル名の修正
+    # gemini-flash-latest が動いた実績に合わせて、-latest 付きを使用します
+    model_name = 'gemini-1.5-pro-latest' 
+    
+    print(f"Gemini ({model_name}) で1ページ目の画像を解析中...")
     
     client = genai.Client(api_key=GEMINI_API_KEY)
     
@@ -116,7 +119,7 @@ def analyze_image_with_gemini(image_urls):
     else:
         raise Exception("画像のダウンロードに失敗しました")
     
-    # ★変更点：ハルシネーション（嘘の日付）を防ぐための厳格なプロンプト
+    # プロンプト（前回と同じ強力なもの）
     prompt = """
 あなたは優秀なデータ入力担当者です。
 1ページ目の画像を読み取り、以下の手順で正確に文字起こしを行ってください。
@@ -152,9 +155,9 @@ https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
     
     contents_list.append(prompt)
 
-    # ★変更点：ここを 'gemini-1.5-pro' に変更して精度を最大化
+    # ★モデル名を指定
     response = client.models.generate_content(
-        model='gemini-1.5-pro',
+        model=model_name,
         contents=contents_list
     )
     
