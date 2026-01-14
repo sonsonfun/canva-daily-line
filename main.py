@@ -9,13 +9,14 @@ from linebot import LineBotApi
 from linebot.models import TextSendMessage, ImageSendMessage
 
 # --- 環境変数の取得 ---
+# 実行環境にこれらの環境変数が設定されていることを確認してください
 CANVA_CLIENT_ID = os.environ["CANVA_CLIENT_ID"]
 CANVA_CLIENT_SECRET = os.environ["CANVA_CLIENT_SECRET"]
 CANVA_DESIGN_ID = os.environ["CANVA_DESIGN_ID"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 LINE_CHANNEL_ACCESS_TOKEN = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 
-# トークンファイルのパス
+# トークンファイルのパス（初回は手動で作成が必要）
 TOKEN_FILE = "canva_token.txt"
 
 def get_canva_access_token():
@@ -23,7 +24,7 @@ def get_canva_access_token():
         with open(TOKEN_FILE, "r") as f:
             refresh_token = f.read().strip()
     except FileNotFoundError:
-        raise Exception(f"{TOKEN_FILE} が見つかりません。最新のトークンを貼ったファイルを作成してください。")
+        raise Exception(f"{TOKEN_FILE} が見つかりません。最新のリフレッシュトークンを貼ったファイルを作成してください。")
 
     url = "https://api.canva.com/rest/v1/oauth/token"
     auth_str = f"{CANVA_CLIENT_ID}:{CANVA_CLIENT_SECRET}"
@@ -62,6 +63,7 @@ def export_canva_design(access_token):
         "Content-Type": "application/json"
     }
     
+    # ここで type: png を指定しているので、Geminiには画像が渡ります
     data = {
         "design_id": CANVA_DESIGN_ID,
         "format": {"type": "png"}
@@ -92,8 +94,8 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # 1枚目だけを対象にする
-    print("Geminiで1ページ目の画像を解析中...")
+    # ★変更点：モデルをPro版にするため、ログを変更
+    print("Gemini (1.5 Pro) で1ページ目の画像を解析中...")
     
     client = genai.Client(api_key=GEMINI_API_KEY)
     
@@ -114,33 +116,45 @@ def analyze_image_with_gemini(image_urls):
     else:
         raise Exception("画像のダウンロードに失敗しました")
     
-    # プロンプト
+    # ★変更点：ハルシネーション（嘘の日付）を防ぐための厳格なプロンプト
     prompt = """
-1ページ目の画像を読み取り、以下のルールに従って人物ごとにタスクを文字起こししてください。
+あなたは優秀なデータ入力担当者です。
+1ページ目の画像を読み取り、以下の手順で正確に文字起こしを行ってください。
 画像はスプレッドシート形式です。
 
-【最重要：期日の読み取り厳格化ルール】
-1. **行番号の無視**: 左端にある「1, 2, 3...」といった行番号の数字は絶対に日付として読み取らないでください。
-2. **日付の必須条件**: セルの中に「/」または「月」という文字が明確に書かれている場合のみ、日付として認識してください。
-3. **推測の禁止**: 上記の条件（/や月）がない数字だけのセルや、空欄のセルは、すべて「（未定）」として処理してください。「たぶんこの日付だろう」という推測は禁止です。
+【手順1：事実確認（重要）】
+まず表の「左の列（期日）」を上から順に見て、以下のチェックを行ってください。
+・文字（インク）が書かれているか？
+・ただの空白ではないか？
+・行番号（1, 2, 3...）やノイズではないか？
 
-【出力ルール】
-1. 人物ごとにセクションを分けてください（見出し記号「###」は使わず、「【氏名】」の形式で区切ってください）。
-2. 各タスクは以下の形式で記述してください。
-   期日：内容
-   - 期日は「M/D」形式に統一。
-   - 条件を満たさない期日は全て「（未定）」と記述。
-3. リストの並び順は、日付が早い順（昇順）に並べ替えてください。
-   - 「（未定）」のタスクは、リストの最後にまとめて配置してください。
-4. タスク内容が空欄の場合は「（なし）」と記載してください。
-5. 全ての出力の最後に、画像の内容とは無関係に、以下を必ず出力してください。
+【手順2：期日の厳格な判定】
+・セルに「/」または「月」という文字が明確にある場合のみ、日付として採用してください。
+・それ以外（空白、行番号のみ、数字のみ）は、絶対に日付を捏造せず「（未定）」として処理してください。推測は禁止です。
+
+【手順3：出力】
+判定に基づき、人物ごとに以下のフォーマットで出力してください。
+
+■出力フォーマット
+【氏名】
+M/D：タスク内容
+（未定）：タスク内容
+
+■並び順とルール
+・日付順（昇順）に並べる。
+・（未定）はリストの最後にまとめる。
+・タスク内容が空欄の場合は「（なし）」とする。
+・見出し記号「###」は使わない。
+
+■最後に必ず出力する定型文
 https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
     """
     
     contents_list.append(prompt)
 
+    # ★変更点：ここを 'gemini-1.5-pro' に変更して精度を最大化
     response = client.models.generate_content(
-        model='gemini-flash-latest',
+        model='gemini-1.5-pro',
         contents=contents_list
     )
     
