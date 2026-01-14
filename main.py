@@ -93,7 +93,7 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # ★決定版：ログで見つかった最新・最強モデルを指定
+    # ★ログで確認できた最新モデル
     model_name = 'gemini-2.5-pro'
     
     print(f"Gemini ({model_name}) で1ページ目の画像を解析中...")
@@ -146,4 +146,60 @@ M/D：タスク内容
 ・日付順（昇順）に並べる。
 ・（未定）はリストの最後にまとめる。
 ・タスク内容が空欄の場合は「（なし）」とする。
-・見出し記
+・見出し記号「###」は使わない。
+
+■最後に必ず出力する定型文
+https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
+    """ 
+    # ↑【注意】この閉じカッコが非常に重要です！
+
+    contents_list.append(prompt)
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents_list
+    )
+    
+    if not response.text:
+        raise Exception("Gemini returned empty response")
+        
+    return response.text
+
+def send_line_message(text, image_urls):
+    print("LINE友だち全員へ一斉送信中...")
+    line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+    
+    messages = []
+    
+    # 画像メッセージ（最大4枚）
+    max_images = 4
+    for i, url in enumerate(image_urls[:max_images]):
+        messages.append(
+            ImageSendMessage(original_content_url=url, preview_image_url=url)
+        )
+    
+    # テキストメッセージ
+    messages.append(TextSendMessage(text=text))
+    
+    line_bot_api.broadcast(messages)
+    
+    print("送信完了")
+
+def main():
+    try:
+        print("--- 処理開始 ---")
+        
+        access_token = get_canva_access_token()
+        image_urls = export_canva_design(access_token)
+        gemini_text = analyze_image_with_gemini(image_urls)
+        
+        print(f"生成されたメッセージ:\n{gemini_text}")
+        send_line_message(gemini_text, image_urls)
+        
+        print("--- 全工程完了 ---")
+    except Exception as e:
+        print(f"エラー発生: {e}")
+        exit(1)
+
+if __name__ == "__main__":
+    main()
