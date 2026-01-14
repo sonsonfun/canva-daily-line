@@ -23,7 +23,7 @@ def get_canva_access_token():
         with open(TOKEN_FILE, "r") as f:
             refresh_token = f.read().strip()
     except FileNotFoundError:
-        # 初回実行時などファイルがない場合のハンドリング（ローカルで作成済み前提ならエラーでOK）
+        # 初回などファイルがない場合のエラーハンドリング
         raise Exception(f"{TOKEN_FILE} が見つかりません。最新のリフレッシュトークンを貼ったファイルを作成してください。")
 
     url = "https://api.canva.com/rest/v1/oauth/token"
@@ -93,8 +93,8 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # ★とりあえず確実に動くFlashモデルを指定（後でログを見てProに変更可能）
-    model_name = 'gemini-1.5-flash'
+    # ★決定版：ログで見つかった最新・最強モデルを指定
+    model_name = 'gemini-2.5-pro'
     
     print(f"Gemini ({model_name}) で1ページ目の画像を解析中...")
     
@@ -117,8 +117,7 @@ def analyze_image_with_gemini(image_urls):
     else:
         raise Exception("画像のダウンロードに失敗しました")
     
-    # ★以前より強力にした「厳格プロンプト」
-    # Flashモデルでも、これなら空欄を正しく認識しやすくなります
+    # ★精度重視の厳格プロンプト
     prompt = """
 あなたは優秀なデータ入力担当者です。
 1ページ目の画像を読み取り、以下の手順で正確に文字起こしを行ってください。
@@ -147,73 +146,4 @@ M/D：タスク内容
 ・日付順（昇順）に並べる。
 ・（未定）はリストの最後にまとめる。
 ・タスク内容が空欄の場合は「（なし）」とする。
-・見出し記号「###」は使わない。
-
-■最後に必ず出力する定型文
-https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
-    """
-    
-    contents_list.append(prompt)
-
-    response = client.models.generate_content(
-        model=model_name,
-        contents=contents_list
-    )
-    
-    if not response.text:
-        raise Exception("Gemini returned empty response")
-        
-    return response.text
-
-def send_line_message(text, image_urls):
-    print("LINE友だち全員へ一斉送信中...")
-    line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-    
-    messages = []
-    
-    # 画像メッセージ（最大4枚）
-    max_images = 4
-    for i, url in enumerate(image_urls[:max_images]):
-        messages.append(
-            ImageSendMessage(original_content_url=url, preview_image_url=url)
-        )
-    
-    # テキストメッセージ
-    messages.append(TextSendMessage(text=text))
-    
-    line_bot_api.broadcast(messages)
-    
-    print("送信完了")
-
-def main():
-    try:
-        print("--- 処理開始 ---")
-        
-        # ★【重要】利用可能なモデル一覧をログに出力する機能
-        # これでGitHub Actionsのログを見れば、正しい「Pro」のIDが分かります
-        print("\n========== モデル一覧チェック開始 ==========")
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            for m in client.models.list():
-                # generateContentが使えるモデルだけを表示
-                if "generateContent" in m.supported_actions:
-                    print(f"利用可能ID: {m.name}")
-        except Exception as e:
-            print(f"モデル一覧の取得に失敗（動作には影響しません）: {e}")
-        print("========== モデル一覧チェック終了 ==========\n")
-
-        # ここからいつもの処理
-        access_token = get_canva_access_token()
-        image_urls = export_canva_design(access_token)
-        gemini_text = analyze_image_with_gemini(image_urls)
-        
-        print(f"生成されたメッセージ:\n{gemini_text}")
-        send_line_message(gemini_text, image_urls)
-        
-        print("--- 全工程完了 ---")
-    except Exception as e:
-        print(f"エラー発生: {e}")
-        exit(1)
-
-if __name__ == "__main__":
-    main()
+・見出し記
