@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from linebot import LineBotApi
 from linebot.models import TextSendMessage, ImageSendMessage
+from linebot.exceptions import LineBotApiError
 
 # --- 環境変数の取得 ---
 CANVA_CLIENT_ID = os.environ["CANVA_CLIENT_ID"]
@@ -23,7 +24,6 @@ def get_canva_access_token():
         with open(TOKEN_FILE, "r") as f:
             refresh_token = f.read().strip()
     except FileNotFoundError:
-        # 初回などファイルがない場合のエラーハンドリング
         raise Exception(f"{TOKEN_FILE} が見つかりません。最新のリフレッシュトークンを貼ったファイルを作成してください。")
 
     url = "https://api.canva.com/rest/v1/oauth/token"
@@ -93,7 +93,7 @@ def export_canva_design(access_token):
     raise Exception("Canva Export Timeout")
 
 def analyze_image_with_gemini(image_urls):
-    # ★ログで確認できた最新モデル
+    # 最新モデル gemini-2.5-pro
     model_name = 'gemini-2.5-pro'
     
     print(f"Gemini ({model_name}) で1ページ目の画像を解析中...")
@@ -105,7 +105,6 @@ def analyze_image_with_gemini(image_urls):
     if not image_urls:
         raise Exception("画像URLが取得できませんでした")
 
-    # リストの最初のURL（1ページ目）のみを取得
     first_url = image_urls[0]
     
     print(f"  - 1ページ目をダウンロード中...")
@@ -117,7 +116,6 @@ def analyze_image_with_gemini(image_urls):
     else:
         raise Exception("画像のダウンロードに失敗しました")
     
-    # ★精度重視の厳格プロンプト
     prompt = """
 あなたは優秀なデータ入力担当者です。
 1ページ目の画像を読み取り、以下の手順で正確に文字起こしを行ってください。
@@ -150,8 +148,7 @@ M/D：タスク内容
 
 ■最後に必ず出力する定型文
 https://www.canva.com/design/DAG9nTLkHxs/QXTXrj2mJFEhVT1MwjXd0Q/edit
-    """ 
-    # ↑【注意】この閉じカッコが非常に重要です！
+    """
 
     contents_list.append(prompt)
 
@@ -170,20 +167,28 @@ def send_line_message(text, image_urls):
     line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
     
     messages = []
-    
-    # 画像メッセージ（最大4枚）
     max_images = 4
     for i, url in enumerate(image_urls[:max_images]):
         messages.append(
             ImageSendMessage(original_content_url=url, preview_image_url=url)
         )
     
-    # テキストメッセージ
     messages.append(TextSendMessage(text=text))
     
-    line_bot_api.broadcast(messages)
-    
-    print("送信完了")
+    # ★修正箇所：上限エラーが出てもログを表示して正常終了させる
+    try:
+        line_bot_api.broadcast(messages)
+        print("送信完了")
+    except LineBotApiError as e:
+        if e.status_code == 429:
+            print("\n" + "="*40)
+            print("【注意】LINEの月間送信上限に達しました。")
+            print("LINEへの送信はできませんでしたが、解析結果は以下の通りです。")
+            print("="*40 + "\n")
+            print(text)  # ここでログにタスク一覧を表示
+            print("\n" + "="*40)
+        else:
+            raise e  # その他のエラーなら通常通りエラーを出す
 
 def main():
     try:
@@ -193,7 +198,7 @@ def main():
         image_urls = export_canva_design(access_token)
         gemini_text = analyze_image_with_gemini(image_urls)
         
-        print(f"生成されたメッセージ:\n{gemini_text}")
+        # ここで送信処理（失敗してもキャッチされる）
         send_line_message(gemini_text, image_urls)
         
         print("--- 全工程完了 ---")
